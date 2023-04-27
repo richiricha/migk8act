@@ -1,0 +1,134 @@
+---
+- hosts: server
+  become: true
+  vars:
+    iam_velero_custom_policy: |
+          {
+          "Version": "2012-10-17",
+          "Statement": [
+              {
+                  "Effect": "Allow",
+                  "Action": [
+                      "ec2:DescribeVolumes",
+                      "ec2:DescribeSnapshots",
+                      "ec2:CreateTags",
+                      "ec2:CreateVolume",
+                      "ec2:CreateSnapshot",
+                      "ec2:DeleteSnapshot"
+                  ],
+                  "Resource": "*"
+              },
+              {
+                  "Effect": "Allow",
+                  "Action": [
+                      "s3:GetObject",
+                      "s3:DeleteObject",
+                      "s3:PutObject",
+                      "s3:AbortMultipartUpload",
+                      "s3:ListMultipartUploadParts"
+                  ],
+                  "Resource": [
+                      "arn:aws:s3:::{{ bucket_name }}/*"
+                  ]
+              },
+              {
+                  "Effect": "Allow",
+                  "Action": [
+                      "s3:ListBucket"
+                  ],
+                  "Resource": [
+                      "arn:aws:s3:::{{ bucket_name }}"
+                  ]
+              }
+          ]
+          }       
+  
+  tasks:
+    - name: Install AWS CLI
+      apt:
+        name: awscli
+        state: present
+    - name: Configure AWS CLI
+      command: aws configure set {{ item.key }} {{ item.value }}
+      loop:
+        - { key: "aws_access_key_id", value: "{{ aws_access_key }}" }
+        - { key: "aws_secret_access_key", value: "{{ aws_secret_key }}" }
+        - { key: "region", value: "{{ region }}" }
+        
+    - name: Install boto3 Python package
+      pip:
+        name: boto3
+        state: present
+        
+    - name: Install boto Python package
+      pip:
+        name: boto
+        state: present
+        
+    - name: Download Velero
+      get_url:
+        url: "https://github.com/vmware-tanzu/velero/releases/download/v1.10.2/velero-v1.10.2-linux-amd64.tar.gz"
+        dest: /tmp/velero-v1.10.2-linux-amd64.tar.gz
+        
+    - name: Extract Velero
+      unarchive:
+        src: /tmp/velero-v1.10.2-linux-amd64.tar.gz
+        dest: /usr/local/bin/
+        remote_src: yes
+        creates: /usr/local/bin/velero-v1.10.2/velero
+        
+    - name: Add Velero to PATH
+      lineinfile:
+        dest: /etc/profile.d/velero.sh
+        line: 'export PATH="$PATH:/usr/local/bin/velero-v1.10.2"'
+        state: present
+        create: yes
+
+    - name: Create S3 Bucket
+      s3_bucket:
+        name: "{{ bucket_name }}"
+        state: present
+        region: "{{ region }}"
+
+    - name: Create IAM user
+      iam:
+        iam_type: user
+        name: "{{ iam_user_name }}"
+        state: present
+        access_key_state: create
+      register: iam_user
+
+    - name: Add policy to IAM user
+      iam_policy:
+        iam_type: user
+        iam_name: "{{ iam_user_name }}"
+        policy_name: "{{ iam_user_name }}-policy"
+        state: "present"
+        policy_json: "{{ iam_velero_custom_policy }}"
+      when: iam_user is defined and iam_user.changed
+
+    - name: Setting access key ID
+      set_fact:
+        access_key_id: "{{ iam_user.user_meta.access_keys[0].access_key_id }}"
+        secret_access_key: "{{ iam_user.user_meta.access_keys[0].secret_access_key }}"       
+ 
+    - name: Create file with content credentials-velero
+      copy:
+        dest: /tmp/credentials-velero
+        content: |
+          [default]
+          aws_access_key_id="{{ access_key_id }}"
+          aws_secret_access_key="{{ secret_access_key }}"  
+          
+    - name: Create Velero backup
+      shell: |
+          velero install \
+          --provider aws \
+          --plugins velero/velero-plugin-for-aws:v1.1.0 \
+          --bucket "{{ bucket_name }}" \
+          --backup-location-config region="{{ region }}" \
+          --snapshot-location-config region="{{ region }}" \
+          --secret-file /tmp/credentials-velero;
+          velero backup create default-namespace-backup --include-namespaces default;
+          velero backup describe default-namespace-backup;
+

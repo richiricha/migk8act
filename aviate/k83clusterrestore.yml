@@ -1,0 +1,94 @@
+---
+- hosts: restoreserver
+  become: true
+  gather_facts: true
+  vars:
+    ansible_ssh_private_key_file: "/root/.ssh/restore_rsa"
+    key_name: ec2-keypair
+    key_file: ~/.ssh/ec2-keypair.pem
+ 
+  tasks:
+    - name: Install python3 and python3-pip components
+      apt:
+       name: "{{ item }}"
+       state: present
+      with_items:
+       - python3
+       - python3-pip
+        
+    - name: Install AWS CLI, boto3 and boto Python package
+      pip:
+        name: "{{ item }}"
+        state: present
+      with_items:
+        - awscli 
+        - boto3
+        - boto
+        
+    - name: Download kubectl
+      get_url:
+        url: https://s3.us-west-2.amazonaws.com/amazon-eks/1.25.6/2023-01-30/bin/linux/amd64/kubectl
+        dest: /usr/local/bin/kubectl
+        mode: 'u+x'
+ 
+    - name: Add kubectl to PATH
+      lineinfile:
+        dest: /usr/local/bin/kubectl
+        line: 'export PATH="$PATH:/usr/local/bin/"'
+        state: present
+        create: yes
+        
+    - name: Configure AWS CLI
+      command: aws configure set {{ item.key }} {{ item.value }}
+      loop:
+        - { key: "aws_access_key_id", value: "{{ aws_access_key }}" }
+        - { key: "aws_secret_access_key", value: "{{ aws_secret_key }}" }
+        - { key: "region", value: "{{ region }}" }
+
+    - name: Download eksctl
+      get_url:
+        url: "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_Linux_amd64.tar.gz"
+        dest: /tmp/eksctl_Linux_amd64.tar.gz  
+
+    - name: Extract eksctl
+      unarchive:
+        src: /tmp/eksctl_Linux_amd64.tar.gz
+        dest: /usr/local/bin/
+        remote_src: yes
+        creates: /usr/local/bin/eksctl        
+        
+    - name: Download Velero
+      get_url:
+        url: "https://github.com/vmware-tanzu/velero/releases/download/v1.10.2/velero-v1.10.2-linux-amd64.tar.gz"
+        dest: /tmp/velero-v1.10.2-linux-amd64.tar.gz
+        
+    - name: Extract Velero
+      unarchive:
+        src: /tmp/velero-v1.10.2-linux-amd64.tar.gz
+        dest: /usr/local/bin/
+        remote_src: yes
+        creates: /usr/local/bin/velero-v1.10.2/velero
+        
+    - name: Add Velero to PATH
+      lineinfile:
+        dest: /etc/profile.d/velero.sh
+        line: 'export PATH="$PATH:/usr/local/bin/velero-v1.10.2"'
+        state: present
+        create: yes
+        
+    - name: Copying the Directory's contents (sub directories/files)
+      become: true 
+      copy:
+       src: /etc/ansible/k8script/eks_script.sh
+       dest: ~/
+       mode: 0755
+       
+    - name: Create Cluster It will take 15 to 20 minutes to create the Cluster Control Plane
+      shell: sh eks_script.sh "{{ cluster_name }}" "{{ region }}" "us-east-1a,us-east-1b" "{{ key_name }}" "{{ bucket_name }}" "{{ AWS_ACCESS_KEY }}" "{{ AWS_ACCESS_ID }}";
+      register: eksctl
+      
+    - debug:
+        var: eksctl.stdout_lines
+
+
+

@@ -1,0 +1,83 @@
+- name: Install Kubernetes on a single instance
+  hosts: server
+  become: true
+  tasks:
+  - name: Install aptitude
+    apt:
+      name: aptitude
+      state: latest
+      update_cache: true
+
+  - name: Install required system packages
+    apt:
+      pkg:
+         - apt-transport-https
+         - ca-certificates
+         - curl
+         - software-properties-common
+         - python3-pip
+         - virtualenv
+         - python3-setuptools
+      state: latest
+      update_cache: true
+  - name: Add Docker GPG apt Key
+    apt_key:
+      url: https://download.docker.com/linux/ubuntu/gpg
+      state: present
+
+  - name: Add Docker Repository
+    apt_repository:
+      repo: deb https://download.docker.com/linux/ubuntu focal stable
+      state: present
+
+  - name: Update apt and install docker-ce
+    apt:
+      name: docker-ce
+      state: latest
+      update_cache: true
+
+  - name: Install Docker Module for Python
+    pip:
+      name: docker
+
+  - name: Add Kubernetes apt key
+    apt_key:
+      url: https://packages.cloud.google.com/apt/doc/apt-key.gpg
+      state: present
+  - name: Add Kubernetes repository
+    apt_repository:
+      repo: deb http://apt.kubernetes.io/ kubernetes-xenial main
+      state: present
+  - name: Install Kubernetes components
+    apt:
+      name: "{{ item }}"
+      state: present
+    with_items:
+      - kubelet
+      - kubeadm
+      - kubectl
+
+  - name: Install kind
+    become: true
+    shell: |
+     curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.11.1/kind-linux-amd64
+     chmod +x ./kind
+     mv ./kind /usr/local/bin/kind
+     
+  - name: Copying the Directory's contents (sub directories/files)
+    become: true 
+    copy:
+      src: /etc/ansible/k8script
+      dest: ~/tmp/
+      mode: 0644
+
+  - name: Create a Kubernetes cluster with kind
+    become: true
+    shell: |
+      sudo kind create cluster --name velero --config /root/tmp/k8script/KindCluster.yaml;
+      sudo kubectl apply -f /root/tmp/k8script/nginx-2-node-deployment.yaml
+      sudo kubectl expose deployment nginx-deployment --name nginx-dev-http --namespace velero --port=80 --target-port=80
+      sudo kubectl proxy &
+      curl http://localhost:8001/api/v1/namespaces/velero/services/http:nginx-dev-http:/proxy/
+        
+
