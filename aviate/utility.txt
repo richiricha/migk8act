@@ -1,6 +1,6 @@
-ssh-keygen -t rsa -b 4096 -C root@172.31.83.210
-ssh-copy-id -i /root/.ssh/id_rsa.pub. root@172.31.83.210:/home/root/.ssh/authorized_keys
-ssh -i /root/.ssh/id_rsa root@172.31.83.210
+ssh-keygen -t rsa -b 4096 -C root@ip
+ssh-copy-id -i /root/.ssh/id_rsa.pub. root@ip:/home/root/.ssh/authorized_keys
+ssh -i /root/.ssh/id_rsa root@ip
 
 ansible-playbook k82clusterbackup.yml --extra-vars "aws_access_key='' aws_secret_key='' region='us-east-2' bucket_name='test2404velero' iam_user_name='velero'"
 
